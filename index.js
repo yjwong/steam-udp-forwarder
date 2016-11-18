@@ -183,7 +183,7 @@ const DiscoverPeers = Promise.coroutine(function* (selfIP) {
     .filter(address => !IPToBuffer(selfIP).equals(IPToBuffer(address)));
 });
 
-const CreatePacketForPeer = function (gatewayMAC, sourceMAC, sourceIP, peerIP) {
+const CreatePacketForPeer = function (gatewayMAC, sourceMAC, sourceIP, peerIP, length) {
   // Send to peer.
   let newBuffer = Buffer.from([
     // ETHERNET
@@ -217,10 +217,10 @@ const CreatePacketForPeer = function (gatewayMAC, sourceMAC, sourceIP, peerIP) {
   IPToBuffer(peerIP).copy(newBuffer, 30);
 
   // Write the UDP header length.
-  newBuffer.writeInt16BE(ret.info.length + 8, 38);
+  newBuffer.writeInt16BE(length + 8, 38);
 
   // Write the IP header length.
-  newBuffer.writeInt16BE(ret.info.length + 8 + 20, 16);
+  newBuffer.writeInt16BE(length + 8 + 20, 16);
 
   // Compute checksum for IP header.
   let checksum = 0;
@@ -241,16 +241,23 @@ Promise.coroutine(function* () {
   const params = yield GetProgramParams();
   const gatewayIP = yield GetGatewayIP();
   const gatewayMAC = yield GetGatewayMAC(params.interface.address, params.interface.mac, gatewayIP);
-  let peers = [ params.peerAddress ];
+  let peers = [];
   console.log(`Resolved gateway: ${gatewayIP} (${gatewayMAC})`);
 
   // If discovery is enabled, discover peers.
   if (config.discovery.enabled) {
     console.log(`Discovering peers via ${GetDiscoveryFQDN()} every ${config.discovery.interval} seconds`);
-    setInterval(Promise.coroutine(function* () {
-      peers = yield DiscoverPeers(params.interface.address);
+    const UpdatePeers = Promise.coroutine(function* () {
+      // Truncate the array while maintaining the reference.
+      peers.length = 0;
+      Array.prototype.push.apply(peers, yield DiscoverPeers(params.interface.address));
       console.log(peers.length > 0 ? `Found peers: ${peers.join(', ')}` : 'No peers found');
-    }), config.discovery.interval * 1000);
+    });
+
+    UpdatePeers();
+    setInterval(UpdatePeers, config.discovery.interval * 1000);
+  } else {
+    peers = [ params.peerAddress ];
   }
 
   // If publishing is enabled, publish the records.
@@ -282,9 +289,8 @@ Promise.coroutine(function* () {
     ret = decoders.UDP(buffer, ret.offset);
 
     for (let peer of peers) {
-      const newBuffer = CreatePacketForPeer(gatewayMAC, params.interface.mac, params.interface.address, peer);
-
       // Write the UDP packet.
+      let newBuffer = CreatePacketForPeer(gatewayMAC, params.interface.mac, params.interface.address, peer, ret.info.length);
       console.log(`Forwarding packet to peer ${peer}`);
       newBuffer = Buffer.concat([ newBuffer, buffer.slice(ret.offset, ret.offset + ret.info.length) ]);
       c.send(newBuffer, newBuffer.length);
