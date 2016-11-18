@@ -1,0 +1,17 @@
+{
+  "name": "steam-udp-forwarder",
+  "version": "1.0.0",
+  "description": "Forwards Steam UDP packets to a destination subnet",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Wong Yong Jie <yjwong92@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "bluebird": "^3.4.6",
+    "cap": "^0.1.2",
+    "inquirer": "^1.2.3",
+    "network": "^0.3.0"
+  }
+}
