@@ -1,0 +1,10 @@
+discovery:
+  enabled: false
+  zone:
+  name:
+  interval: 10
+publishing:
+  enabled: false
+  email:
+  key:
+  lifetime: 300
