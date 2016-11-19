@@ -205,7 +205,7 @@ Promise.coroutine(function* () {
 
     if (ret.info.type !== PROTOCOL.ETHERNET.IPV4) { return; }
     ret = decoders.IPV4(buffer, ret.offset);
-    if (ret.info.dstaddr !== "255.255.255.255") { return; }
+    if (!ret.info.dstaddr.endsWith(".255")) { return; }
     console.log(`Received packet from ${ret.info.srcaddr}`);
 
     if (ret.info.protocol !== PROTOCOL.IP.UDP) { return; }
