@@ -5,6 +5,7 @@ const net = require('net');
 
 const Promise = require('bluebird');
 const config = require('config');
+const WebSocket = require('ws');
 const inquirer = require('inquirer');
 
 const Cap = require('cap').Cap;
@@ -58,7 +59,7 @@ const GetGatewayIP = Promise.coroutine(function* () {
 const GetGatewayMAC = Promise.coroutine(function* (iface, sourceMAC, targetIP) {
   const capture = new Cap();
   const device = Cap.findDevice(iface);
-  const filter = 'arp';
+  const filter = '';
   const bufSize = 10 * 1024 * 1024;
   const buffer = new Buffer(65535);
   const linkType = capture.open(device, filter, bufSize, buffer);
@@ -108,79 +109,6 @@ const GetGatewayMAC = Promise.coroutine(function* (iface, sourceMAC, targetIP) {
   
   capture.send(newBuffer, newBuffer.length);
   return yield waitForARP;
-});
-
-const GetDiscoveryFQDN = function () {
-  return `${config.discovery.name}.${config.discovery.zone}`;
-};
-
-const PublishToCloudFlare = Promise.coroutine(function* (address) {
-  const CloudFlare = require('cloudflare');
-  const client = new CloudFlare({
-    email: config.publishing.email,
-    key: config.publishing.key
-  });
-
-  let response = yield client.browseZones({ name: config.discovery.zone });
-  if (response.result.length <= 0) {
-    console.log(`Publishing failed because zone ${config.discovery.zone} was not found`);
-    return;
-  }
-
-  const zone = response.result[0];
-  response = yield client.browseDNS(zone, { type: 'TXT', name: `${GetDiscoveryFQDN()}` });
-
-  // Lookup the DNS record.
-  let record = null;
-  if (response.result.length <= 0) {
-    // Create the DNS record if it doesn't exist.
-    record = yield client.addDNS(CloudFlare.DNSRecord.create({
-      type: 'TXT',
-      name: GetDiscoveryFQDN(),
-      content: 'null',
-      zoneId: zone.id
-    }));
-  } else {
-    record = response.result[0];
-  }
-
-  // Check the record data.
-  const time = Math.floor(new Date() / 1000);
-  let parsedRecord = JSON.parse(record.content);
-  if (parsedRecord === null) { parsedRecord = {}; }
-  parsedRecord[address] = time + config.publishing.lifetime;
-
-  // Look through old records and remove them.
-  const keys = Object.keys(parsedRecord);
-  for (let key of keys) {
-    if (parsedRecord[key] < time) {
-      delete parsedRecord[key];
-    }
-  }
-
-  // Serialize the record and set.
-  record.content = JSON.stringify(parsedRecord);
-  yield client.editDNS(record);
-});
-
-const DiscoverPeers = Promise.coroutine(function* (selfIP) {
-  const dns = Promise.promisifyAll(require('dns'));
-  const record = yield dns.resolveTxtAsync(GetDiscoveryFQDN());
-  if (record.length <= 0) {
-    console.log('No peers discovered, autodiscovery not available');
-    return;
-  }
-
-  const parsedRecord = JSON.parse(record[0][0]);
-  const time = Math.floor(new Date() / 1000);
-
-  // Ignore expired records and self.
-  return Object.keys(parsedRecord)
-    .filter(address => {
-      const expiry = parsedRecord[address];
-      return expiry > time;
-    })
-    .filter(address => !IPToBuffer(selfIP).equals(IPToBuffer(address)));
 });
 
 const CreatePacketForPeer = function (gatewayMAC, sourceMAC, sourceIP, peerIP, length) {
@@ -246,24 +174,19 @@ Promise.coroutine(function* () {
 
   // If discovery is enabled, discover peers.
   if (config.discovery.enabled) {
-    console.log(`Discovering peers via ${GetDiscoveryFQDN()} every ${config.discovery.interval} seconds`);
-    const UpdatePeers = Promise.coroutine(function* () {
-      // Truncate the array while maintaining the reference.
-      peers.length = 0;
-      Array.prototype.push.apply(peers, yield DiscoverPeers(params.interface.address));
-      console.log(peers.length > 0 ? `Found peers: ${peers.join(', ')}` : 'No peers found');
-    });
+    console.log(`Discovering peers via ${config.discovery.endpoint}`);
+    console.log(`Publishing this host (${params.interface.address})...`);
 
-    UpdatePeers();
-    setInterval(UpdatePeers, config.discovery.interval * 1000);
+    const websocket = new WebSocket(config.discovery.endpoint);
+    websocket.on('open', () => websocket.send(params.interface.address));
+    websocket.on('message', (data) => {
+      const parsed = JSON.parse(data).filter((peer) => peer !== params.interface.address);
+      peers.length = 0;
+      Array.prototype.push.apply(peers, parsed);
+      console.log(peers.length > 0 ? `Received peers: ${peers.join(', ')}` : 'No peers found');
+    });
   } else {
     peers = [ params.peerAddress ];
-  }
-
-  // If publishing is enabled, publish the records.
-  if (config.publishing.enabled) {
-    console.log(`Publishing this host (${params.interface.address})...`);
-    yield PublishToCloudFlare(params.interface.address);
   }
 
   const c = new Cap();

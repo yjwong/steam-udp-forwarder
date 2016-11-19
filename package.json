@@ -11,10 +11,10 @@
   "dependencies": {
     "bluebird": "^3.4.6",
     "cap": "^0.1.2",
-    "cloudflare": "^1.0.5",
     "config": "^1.24.0",
     "inquirer": "^1.2.3",
     "js-yaml": "^3.7.0",
-    "network": "^0.3.0"
+    "network": "^0.3.0",
+    "ws": "^1.1.1"
   }
 }
